@@ -565,6 +565,9 @@ case "${host}" in
   z8k-*-coff)
 	sys_dir=z8ksim
 	;;
+  i[3-7]86-*-mmurtl*)
+	sys_dir=mmurtl
+	;;
 esac
 
 # Host specific flag settings -- usually for features that are not
