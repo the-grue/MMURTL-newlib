@@ -6,7 +6,14 @@
 #include <sys/errno.h>
 #include <sys/time.h>
 #include <stdio.h>
+#include <string.h>
 #include <mmlib.h>
+
+#define ERCOK		0
+#define ERCNOTAFILE	202
+#define ERCDUPNAME	226
+
+int lseek(int file, int ptr, int dir);
  
 /*  void _exit(int ExitCode); */
 
@@ -60,19 +67,223 @@ int kill(int pid, int sig)
 		return KillJob(pid);
 }
 
+/* int open(const char *name, int flags, ...); */
+int open(const char *name, int flags, ...)
+{
+	int pdHandleRet;
+	int erc;
+	int fnamelen = strlen(name);
+
+	/* We'll only try to check for flags that are supported by */
+	/* MMURTL and group as required.  For example, we'll ignore  */
+	/* the ... for mode since FAT doesn't support the Unix type */
+	/* file permissions rwxrwxrwx */
+
+	/* First, see if we are trying to create a file */
+
+	if(flags & O_CREAT)
+	{
+		erc = CreateFile(name, fnamelen, 0);	
+
+		if(erc == ERCNOTAFILE)
+		{
+			errno = EINVAL;
+			return -1;
+		}
+		if(erc == ERCDUPNAME)
+		{
+			if(flags & O_EXCL)
+			{
+				errno = EINVAL;
+				return -1;
+			}
+			if(flags & O_TRUNC)
+			{
+				erc = OpenFile(name, fnamelen, 1, 1, &pdHandleRet);
+				if(erc != ERCOK)
+				{
+					errno = EINVAL;
+					return -1;
+				}
+				erc = DeleteFile(pdHandleRet);
+				if(erc != ERCOK)
+				{
+					errno = EINVAL;
+					return -1;
+				}
+				erc = CreateFile(name, fnamelen, 0);
+				if(erc != ERCOK)
+				{
+					errno = EINVAL;
+					return -1;
+				}
+
+			}
+		}
+	}
+
+	/* Now open the file if we got to here */
+
+	erc = OpenFile(name, fnamelen, flags & 1, 1, &pdHandleRet);
+	if(erc != ERCOK)
+	{
+		errno = EINVAL;
+		return -1;
+	}
+
+	if(flags & O_APPEND)
+		if(lseek(pdHandleRet, 0, SEEK_END) == -1)
+		{
+			close(pdHandleRet);
+			errno = EINVAL;
+			return -1;
+		}
+
+	return pdHandleRet;
+}
+
+/* int lseek(int file, int ptr, int dir); */
+
+int lseek(int file, int ptr, int dir)
+{
+	int lfa;
+	int size;
+	int erc;
+
+	GetFileSize(file, &size);
+				
+	switch(dir)
+	{
+		case SEEK_SET:
+		      		if(ptr < 0 || ptr > size)
+				{
+					errno = EINVAL;
+					return -1;
+				}
+		      		lfa = ptr;
+				break;
+
+		case SEEK_CUR:
+		      		GetFileLFA(file, &lfa);
+				lfa += ptr;
+				if(lfa < 0 || lfa > size)
+				{
+					errno = EINVAL;
+					return -1;
+				}
+				break;
+
+		case SEEK_END:
+		      		lfa = ptr + size;
+				if(lfa < 0)
+				{
+					errno = EINVAL;
+					return -1;
+				}
+		      		if(ptr > 0)
+		      			lfa = -1;
+				break;
+
+		default:
+				errno = EINVAL;
+				return -1;
+	}
+
+	erc = SetFileLFA(file, lfa);
+
+	if(erc)
+	{
+		errno = EINVAL;
+		return -1;
+	}
+	else
+		return lfa;
+}
+
+/* int read(int file, char *ptr, int len); */
+
+int read(int file, char *ptr, int len)
+{
+	int pdBytesRet;
+	int erc = ReadBytes(file, ptr, len, &pdBytesRet);
+
+	if(erc)
+	{
+		errno = EINVAL;
+		return -1;
+	}
+	else
+		return pdBytesRet;
+}
+
+/* int write(int file, char *ptr, int len); */
+
+int write(int file, char *ptr, int len)
+{
+	int pdBytesRet;
+	int erc; 
+
+	/* Since MMURTL uses 1 for keyboard, remap writes */
+	/* for file handle 1 to file handle 2, which also */
+	/* covers stderr */
+	if(file == 1)
+		file = 2;
+	
+	erc = WriteBytes(file, ptr, len, &pdBytesRet);
+
+	if(erc)
+	{
+		errno = EINVAL;
+		return -1;
+	}
+	else
+		return pdBytesRet;
+}
+
+/* int link(char *old, char *new); */
+
+int link(char *old, char *new)
+{
+	/* MMURTL doesn't support file linking.  We could make a copy */
+	/* of the file, but for now we'll just return an error.  */
+	errno = EMLINK;
+	return -1;
+}
+
+/* int unlink(char *name); */
+
+int unlink(char *name)
+{
+	int delfile;
+	int erc;
+
+	/* MMURTL DeleteFile system call takes a file handle to an */
+	/* open file to delete a file, so we have to open the file first. */
+	if((delfile = open(name, O_RDWR)) < 0)
+	{
+		errno = ENOENT;
+		return -1;
+	}
+
+	erc = DeleteFile(delfile);
+
+	if(erc)
+	{
+		errno = EINVAL;
+		return -1;
+	}
+	else
+		return erc;
+}
+
+
 char **environ; /* pointer to array of char * strings that define the current environment variables */
 int execve(char *name, char **argv, char **env);
 int fork();
 int fstat(int file, struct stat *st);
-int link(char *old, char *new);
-int lseek(int file, int ptr, int dir);
-int open(const char *name, int flags, ...);
-int read(int file, char *ptr, int len);
 caddr_t sbrk(int incr);
 int stat(const char *file, struct stat *st);
 clock_t times(struct tms *buf);
-int unlink(char *name);
 int wait(int *status);
-int write(int file, char *ptr, int len);
 /*int gettimeofday(struct timeval *p, struct timezone *z);*/
 int gettimeofday(struct timeval *p, void *z);
