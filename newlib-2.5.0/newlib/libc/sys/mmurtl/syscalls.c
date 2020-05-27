@@ -13,6 +13,8 @@
 #define ERCNOTAFILE	202
 #define ERCDUPNAME	226
 
+static int *pagebreak = 0xFFFFFFFF;
+
 int lseek(int file, int ptr, int dir);
  
 /*  void _exit(int ExitCode); */
@@ -124,7 +126,7 @@ int open(const char *name, int flags, ...)
 
 	/* Now open the file if we got to here */
 
-	erc = OpenFile(name, fnamelen, flags & 1, 1, &pdHandleRet);
+	erc = OpenFile(name, fnamelen, ((flags & 2) >> 1), 1, &pdHandleRet);
 	if(erc != ERCOK)
 	{
 		errno = EINVAL;
@@ -205,7 +207,15 @@ int lseek(int file, int ptr, int dir)
 int read(int file, char *ptr, int len)
 {
 	int pdBytesRet;
-	int erc = ReadBytes(file, ptr, len, &pdBytesRet);
+	int erc;
+       
+	/* Since MMURTL uses 1 for keyboard, remap reads */
+	/* for file handle 0 (stdin) to file handle 1 */
+
+	if(file == 0)
+		file = 1;
+
+	erc = ReadBytes(file, ptr, len, &pdBytesRet);
 
 	if(erc)
 	{
@@ -220,7 +230,7 @@ int read(int file, char *ptr, int len)
 
 int write(int file, char *ptr, int len)
 {
-	int pdBytesRet;
+	int *pdBytesRet;
 	int erc; 
 
 	/* Since MMURTL uses 1 for keyboard, remap writes */
@@ -228,7 +238,7 @@ int write(int file, char *ptr, int len)
 	/* covers stderr */
 	if(file == 1)
 		file = 2;
-	
+
 	erc = WriteBytes(file, ptr, len, &pdBytesRet);
 
 	if(erc)
@@ -276,12 +286,54 @@ int unlink(char *name)
 		return erc;
 }
 
+/* caddr_t sbrk(int incr); */
+
+caddr_t sbrk(int incr)
+{
+	int pages;
+	char *ppMemRet;
+	int erc;
+
+	if(incr == 0)
+	{
+		if(*pagebreak == 0xFFFFFFFF)
+		{
+			erc = AllocPage(1, &ppMemRet);
+			if(erc)
+			{
+				errno = ENOMEM;
+				return -1;
+			}	
+			pagebreak = ppMemRet + 0x1000 - 1;
+			return pagebreak;
+		}
+		else
+			return pagebreak;
+	}
+
+	pages = incr / 4096;
+	if(incr % 4096)
+		pages++;
+
+	erc = AllocPage(pages, &ppMemRet);
+
+	if(erc)
+	{
+		errno = ENOMEM;
+		return -1;
+	}	
+	else
+	{
+		pagebreak = ppMemRet + (pages * 0x1000) - 1;
+		return ppMemRet;
+	}
+}
+
 
 char **environ; /* pointer to array of char * strings that define the current environment variables */
 int execve(char *name, char **argv, char **env);
 int fork();
 int fstat(int file, struct stat *st);
-caddr_t sbrk(int incr);
 int stat(const char *file, struct stat *st);
 clock_t times(struct tms *buf);
 int wait(int *status);
