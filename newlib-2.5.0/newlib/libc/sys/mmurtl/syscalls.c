@@ -13,7 +13,11 @@
 #define ERCNOTAFILE	202
 #define ERCDUPNAME	226
 
-static int *pagebreak = 0xFFFFFFFF;
+extern _heap;
+
+/*static int *pagebreak = 0xFFFFFFFF;*/
+static void *pagebreak = (char *)&_heap;
+static void *maxcuralloc = (char *)&_heap;
 
 int lseek(int file, int ptr, int dir);
  
@@ -292,24 +296,27 @@ caddr_t sbrk(int incr)
 {
 	int pages;
 	char *ppMemRet;
+	void *ptr = pagebreak;
 	int erc;
+
+	/* Just a query of where current brk is */
 
 	if(incr == 0)
 	{
-		if(*pagebreak == 0xFFFFFFFF)
-		{
-			erc = AllocPage(1, &ppMemRet);
-			if(erc)
-			{
-				errno = ENOMEM;
-				return -1;
-			}	
-			pagebreak = ppMemRet + 0x1000 - 1;
-			return pagebreak;
-		}
-		else
-			return pagebreak;
+		return ptr;
 	}
+
+	/* See if we can satisfy the current request
+	 * out of memory already allocated */
+
+	if(((char *)pagebreak + incr) < maxcuralloc)	
+	{
+		pagebreak = ((char*) pagebreak) + incr;	
+		return ptr;
+	}
+
+	/* MMURTL allocates whole pages, so we have to compute
+	 * nearest page ceiling */
 
 	pages = incr / 4096;
 	if(incr % 4096)
@@ -324,17 +331,31 @@ caddr_t sbrk(int incr)
 	}	
 	else
 	{
-		pagebreak = ppMemRet + (pages * 0x1000) - 1;
-		return ppMemRet;
+		pagebreak = ((char*) pagebreak) + incr;	
+		maxcuralloc = ((char *) maxcuralloc) + (pages * 4096); 
+		return ptr;
 	}
 }
 
+/*int fstat(int file, struct stat *st);*/
+
+int fstat(int file, struct stat *st)
+{
+	st->st_mode = S_IFCHR;
+	return 0;
+}
+
+/*int stat(const char *file, struct stat *st);*/
+
+int stat(const char *file, struct stat *st)
+{
+	st->st_mode = S_IFCHR;
+	return 0;
+}
 
 char **environ; /* pointer to array of char * strings that define the current environment variables */
 int execve(char *name, char **argv, char **env);
 int fork();
-int fstat(int file, struct stat *st);
-int stat(const char *file, struct stat *st);
 clock_t times(struct tms *buf);
 int wait(int *status);
 /*int gettimeofday(struct timeval *p, struct timezone *z);*/
